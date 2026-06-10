@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Тренажёр Django ORM</title>
+    <style>
+        :root {
+            --bg: #1a1b26;
+            --sidebar: #16161e;
+            --panel: #24283b;
+            --text: #a9b1d6;
+            --accent: #7aa2f7;
+            --success: #9ece6a;
+            --error: #f7768e;
+            --border: #3b4261;
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; }
+        .sidebar { width: 260px; background: var(--sidebar); border-right: 1px solid var(--border); padding: 1rem 0; flex-shrink: 0; }
+        .sidebar h2 { margin: 0 1rem 0.75rem; font-size: 0.9rem; color: var(--accent); font-weight: 600; }
+        .sidebar ul { list-style: none; padding: 0; margin: 0; }
+        .sidebar a { display: block; padding: 0.5rem 1rem; color: var(--text); text-decoration: none; font-size: 0.9rem; }
+        .sidebar a:hover { background: var(--panel); color: var(--accent); }
+        .sidebar a.active { background: var(--panel); color: var(--accent); border-left: 3px solid var(--accent); padding-left: calc(1rem - 3px); }
+        .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+        .theory { background: var(--panel); padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); white-space: normal; font-size: 0.9rem; line-height: 1.55; max-height: 48vh; overflow-y: auto; }
+        .theory:empty { display: none; }
+        .theory h3 { margin: 0 0 0.5rem; font-size: 1rem; color: var(--accent); }
+        .theory h4 { margin: 0.75rem 0 0.35rem; color: var(--accent); font-size: 0.95rem; }
+        .theory p { margin: 0.25rem 0 0.5rem; }
+        .theory ul { margin: 0.25rem 0 0.75rem 1.1rem; }
+        .theory li { margin: 0.15rem 0; }
+        .theory a { color: #7dcfff; text-decoration: none; }
+        .theory a:hover { text-decoration: underline; }
+        .task-block { padding: 1rem 1.5rem; flex: 1; overflow-y: auto; }
+        .task-block h3 { margin: 0 0 0.75rem; font-size: 1rem; color: var(--text); }
+        .task-problem { margin-bottom: 1rem; padding: 0.75rem; background: var(--panel); border-radius: 6px; border-left: 3px solid var(--accent); font-size: 0.9rem; line-height: 1.55; }
+        .task-problem p { margin: 0 0 0.5rem; }
+        .task-problem p:last-child { margin-bottom: 0; }
+        .task-problem ul { margin: 0.35rem 0 0 1.1rem; padding: 0; }
+        .task-problem li { margin: 0.2rem 0; }
+        .task-problem code { font-family: 'Consolas', 'Monaco', monospace; font-size: 0.88em; background: rgba(0,0,0,0.25); padding: 0.1em 0.35em; border-radius: 4px; color: #c0caf5; }
+        .hint { font-size: 0.85rem; color: var(--accent); margin-bottom: 0.5rem; }
+        textarea.code { width: 100%; min-height: 140px; padding: 0.75rem; font-family: 'Consolas', 'Monaco', monospace; font-size: 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; color: var(--text); resize: vertical; }
+        textarea.code:focus { outline: none; border-color: var(--accent); }
+        .actions { margin-top: 0.75rem; display: flex; align-items: center; gap: 1rem; }
+        button { padding: 0.5rem 1rem; border: none; border-radius: 6px; font-size: 0.9rem; cursor: pointer; }
+        button.primary { background: var(--accent); color: var(--bg); }
+        button.primary:hover { filter: brightness(1.1); }
+        .result { margin-top: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 6px; font-size: 0.9rem; }
+        .result.ok { background: rgba(158, 206, 106, 0.2); color: var(--success); }
+        .result.err { background: rgba(247, 118, 142, 0.2); color: var(--error); }
+        .task-list { margin-top: 0.5rem; }
+        .task-list button { display: block; width: 100%; text-align: left; padding: 0.4rem 1rem; background: transparent; color: var(--text); border: none; cursor: pointer; font-size: 0.85rem; border-radius: 4px; }
+        .task-list button:hover { background: var(--panel); }
+        .task-list button.current { color: var(--accent); }
+        .topic-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; }
+        .secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+    </style>
+</head>
+<body>
+    <aside class="sidebar">
+        <h2>Разделы</h2>
+        <ul id="topic-list"></ul>
+    </aside>
+    <main class="main">
+        <div class="theory" id="theory"></div>
+        <div class="task-block">
+            <div class="topic-head">
+                <h3 id="topic-title">Выберите раздел слева</h3>
+                <button type="button" class="primary" id="btn-start-tasks" style="display: none;">Перейти к задачам</button>
+            </div>
+            <div id="task-list-wrap" style="display: none;">
+                <h3>Задания</h3>
+                <div class="task-list" id="task-list"></div>
+            </div>
+            <h3 id="task-title" style="display: none;">Задание</h3>
+            <div class="theory" id="task-theory" style="margin-bottom: 0.75rem; font-size: 0.85rem;"></div>
+            <div class="task-problem" id="task-problem"></div>
+            <div class="hint" id="task-hint"></div>
+            <textarea class="code" id="code" placeholder="Введите код запроса (например Book.objects.filter(is_published=True))"></textarea>
+            <div class="actions">
+                <button type="button" class="primary" id="btn-check">Проверить</button>
+                <span class="result" id="result"></span>
+            </div>
+        </div>
+    </main>
+    <script>
+        const topicListEl = document.getElementById('topic-list');
+        const theoryEl = document.getElementById('theory');
+        const taskListWrap = document.getElementById('task-list-wrap');
+        const taskListEl = document.getElementById('task-list');
+        const topicTitleEl = document.getElementById('topic-title');
+        const btnStartTasks = document.getElementById('btn-start-tasks');
+        const taskTitleEl = document.getElementById('task-title');
+        const taskTheoryEl = document.getElementById('task-theory');
+        const taskProblemEl = document.getElementById('task-problem');
+        const taskHintEl = document.getElementById('task-hint');
+        const codeEl = document.getElementById('code');
+        const btnCheck = document.getElementById('btn-check');
+        const resultEl = document.getElementById('result');
+
+        let topics = [];
+        let currentTopic = null;
+        let currentTask = null;
+
+        function renderTheoryHtml(raw) {
+            if (!raw) return '';
+            return raw;
+        }
+
+        function stripHtml(html) {
+            if (!html) return '';
+            const d = document.createElement('div');
+            d.innerHTML = html;
+            return (d.textContent || d.innerText || '').replace(/\s+/g, ' ').trim();
+        }
+
+        async function loadTopics() {
+            const r = await fetch('/api/topics/');
+            const data = await r.json();
+            topics = data.topics;
+            topicListEl.innerHTML = topics.map(t => `<li><a href="#" data-topic-id="${t.id}">${t.name}</a></li>`).join('');
+            topicListEl.querySelectorAll('a').forEach(a => {
+                a.addEventListener('click', (e) => { e.preventDefault(); selectTopic(Number(a.dataset.topicId)); });
+            });
+        }
+
+        async function selectTopic(topicId) {
+            topicListEl.parentElement.querySelectorAll('a').forEach(a => a.classList.remove('active'));
+            topicListEl.parentElement.querySelector(`a[data-topic-id="${topicId}"]`)?.classList.add('active');
+            const r = await fetch(`/api/topics/${topicId}/`);
+            currentTopic = await r.json();
+            topicTitleEl.textContent = currentTopic.name;
+            theoryEl.innerHTML = renderTheoryHtml(currentTopic.theory || '');
+            theoryEl.style.display = currentTopic.theory ? 'block' : 'none';
+            btnStartTasks.style.display = currentTopic.tasks.length ? 'inline-block' : 'none';
+            taskTheoryEl.innerHTML = '';
+            taskTheoryEl.style.display = 'none';
+            taskListWrap.style.display = 'none';
+            taskListEl.innerHTML = currentTopic.tasks.map(t => {
+                const plain = stripHtml(t.problem);
+                const label = plain.length > 52 ? plain.slice(0, 52) + '…' : plain;
+                return `<button type="button" data-task-id="${t.id}">${t.order}. ${label}</button>`;
+            }).join('');
+            taskListEl.querySelectorAll('button').forEach(btn => {
+                btn.addEventListener('click', () => selectTask(Number(btn.dataset.taskId)));
+            });
+            if (!currentTopic.tasks.length) {
+                currentTask = null;
+                taskTitleEl.textContent = 'В этой теме пока нет заданий';
+                taskTitleEl.style.display = 'none';
+                taskTheoryEl.innerHTML = '';
+                taskTheoryEl.style.display = 'none';
+                taskProblemEl.textContent = '';
+                taskHintEl.textContent = '';
+                codeEl.value = '';
+                resultEl.textContent = '';
+            } else {
+                taskTitleEl.style.display = 'none';
+                taskProblemEl.textContent = 'Сначала изучи теорию выше, затем нажми "Перейти к задачам".';
+                taskHintEl.textContent = '';
+                codeEl.value = '';
+                resultEl.textContent = '';
+            }
+        }
+
+        async function selectTask(taskId) {
+            taskListEl.querySelectorAll('button').forEach(b => { b.classList.toggle('current', Number(b.dataset.taskId) === taskId); });
+            const r = await fetch(`/api/tasks/${taskId}/`);
+            currentTask = await r.json();
+            taskTitleEl.style.display = 'block';
+            taskTitleEl.textContent = `Задание ${currentTask.order}`;
+            taskTheoryEl.innerHTML = renderTheoryHtml(currentTask.theory || '');
+            taskTheoryEl.style.display = currentTask.theory ? 'block' : 'none';
+            taskProblemEl.innerHTML = renderTheoryHtml(currentTask.problem || '');
+            const modelFields = (currentTask.hint_model_fields || []).join(', ');
+            if (currentTask.hint_model) {
+                const tzHint = /сегодня|на сегодня/i.test(currentTask.problem || '')
+                    ? ` Для «сегодня» в эталоне: <code>timezone.now().date()</code> — это <code>django.utils.timezone</code> (в тренажёре уже доступен как <code>timezone</code>).`
+                    : '';
+                taskHintEl.innerHTML = `Модель: <code>${currentTask.hint_model}</code>. Поля: <code>${modelFields || '—'}</code>.${tzHint}`;
+            } else {
+                taskHintEl.textContent = '';
+            }
+            codeEl.value = '';
+            resultEl.textContent = '';
+            resultEl.className = 'result';
+        }
+
+        async function check() {
+            if (!currentTask) return;
+            resultEl.textContent = 'Проверка…';
+            resultEl.className = 'result';
+            const r = await fetch('/api/check/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ task_id: currentTask.id, code: codeEl.value })
+            });
+            const data = await r.json();
+            resultEl.textContent = data.message || (data.ok ? 'Верно!' : 'Ошибка');
+            resultEl.className = 'result ' + (data.ok ? 'ok' : 'err');
+        }
+
+        function handleCodeIndentation(e) {
+            if (e.key !== 'Tab') return;
+            e.preventDefault();
+            const start = codeEl.selectionStart;
+            const end = codeEl.selectionEnd;
+            const value = codeEl.value;
+            const indent = '    ';
+
+            // Отступ/снятие отступа для выделенного блока
+            if (start !== end) {
+                const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+                const selected = value.slice(lineStart, end);
+                const lines = selected.split('\n');
+                let changed;
+
+                if (e.shiftKey) {
+                    changed = lines.map((line) => {
+                        if (line.startsWith(indent)) return line.slice(indent.length);
+                        if (line.startsWith('\t')) return line.slice(1);
+                        if (line.startsWith('  ')) return line.slice(2);
+                        if (line.startsWith(' ')) return line.slice(1);
+                        return line;
+                    }).join('\n');
+                } else {
+                    changed = lines.map((line) => indent + line).join('\n');
+                }
+
+                codeEl.value = value.slice(0, lineStart) + changed + value.slice(end);
+                codeEl.selectionStart = lineStart;
+                codeEl.selectionEnd = lineStart + changed.length;
+                return;
+            }
+
+            // Отступ/снятие отступа для текущей строки
+            if (e.shiftKey) {
+                const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+                const linePrefix = value.slice(lineStart, start);
+                let remove = 0;
+                if (linePrefix.endsWith(indent)) remove = indent.length;
+                else if (linePrefix.endsWith('\t')) remove = 1;
+                else if (linePrefix.endsWith('  ')) remove = 2;
+                else if (linePrefix.endsWith(' ')) remove = 1;
+                if (remove > 0) {
+                    codeEl.value = value.slice(0, start - remove) + value.slice(start);
+                    codeEl.selectionStart = start - remove;
+                    codeEl.selectionEnd = start - remove;
+                }
+            } else {
+                codeEl.value = value.slice(0, start) + indent + value.slice(end);
+                codeEl.selectionStart = start + indent.length;
+                codeEl.selectionEnd = start + indent.length;
+            }
+        }
+
+        function showTasks() {
+            if (!currentTopic || !currentTopic.tasks?.length) return;
+            taskListWrap.style.display = 'block';
+            selectTask(currentTopic.tasks[0].id);
+        }
+
+        btnCheck.addEventListener('click', check);
+        codeEl.addEventListener('keydown', handleCodeIndentation);
+        btnStartTasks.addEventListener('click', showTasks);
+        loadTopics();
+    </script>
+</body>
+</html>
