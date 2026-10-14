@@ -57,6 +57,12 @@
         .task-list button.current { color: var(--accent); }
         .topic-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; }
         .secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+        .sql-panel { margin-top: 1rem; display: none; }
+        .sql-panel.visible { display: block; }
+        .sql-panel h4 { margin: 0 0 0.5rem; font-size: 0.9rem; color: var(--accent); font-weight: 600; }
+        .sql-panel pre { margin: 0; padding: 0.75rem 1rem; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; line-height: 1.45; color: #c0caf5; white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
+        .sql-panel .sql-note { font-size: 0.8rem; color: #565f89; margin-top: 0.35rem; }
+        .sql-panel.reference { opacity: 0.85; }
     </style>
 </head>
 <body>
@@ -82,7 +88,18 @@
             <textarea class="code" id="code" placeholder="Введите код запроса (например Book.objects.filter(is_published=True))"></textarea>
             <div class="actions">
                 <button type="button" class="primary" id="btn-check">Проверить</button>
+                <button type="button" class="secondary" id="btn-sql">Показать SQL</button>
                 <span class="result" id="result"></span>
+            </div>
+            <div class="sql-panel reference" id="solution-sql-panel">
+                <h4>Эталонный SQL (из решения задания)</h4>
+                <pre id="solution-sql"></pre>
+                <div class="sql-note">Компилируется из эталонного ORM-запроса — для сравнения с вашим.</div>
+            </div>
+            <div class="sql-panel" id="user-sql-panel">
+                <h4>SQL вашего запроса</h4>
+                <pre id="user-sql"></pre>
+                <div class="sql-note">Сырой SQL, в который Django компилирует ваш ORM (без выполнения отдельно от проверки).</div>
             </div>
         </div>
     </main>
@@ -99,7 +116,12 @@
         const taskHintEl = document.getElementById('task-hint');
         const codeEl = document.getElementById('code');
         const btnCheck = document.getElementById('btn-check');
+        const btnSql = document.getElementById('btn-sql');
         const resultEl = document.getElementById('result');
+        const solutionSqlPanel = document.getElementById('solution-sql-panel');
+        const solutionSqlEl = document.getElementById('solution-sql');
+        const userSqlPanel = document.getElementById('user-sql-panel');
+        const userSqlEl = document.getElementById('user-sql');
 
         let topics = [];
         let currentTopic = null;
@@ -115,6 +137,31 @@
             const d = document.createElement('div');
             d.innerHTML = html;
             return (d.textContent || d.innerText || '').replace(/\s+/g, ' ').trim();
+        }
+
+        function showUserSql(sql) {
+            if (sql) {
+                userSqlEl.textContent = sql;
+                userSqlPanel.classList.add('visible');
+            } else {
+                userSqlEl.textContent = '';
+                userSqlPanel.classList.remove('visible');
+            }
+        }
+
+        function showSolutionSql(sql) {
+            if (sql) {
+                solutionSqlEl.textContent = sql;
+                solutionSqlPanel.classList.add('visible');
+            } else {
+                solutionSqlEl.textContent = '';
+                solutionSqlPanel.classList.remove('visible');
+            }
+        }
+
+        function clearSqlPanels() {
+            showUserSql('');
+            showSolutionSql('');
         }
 
         async function loadTopics() {
@@ -157,12 +204,14 @@
                 taskHintEl.textContent = '';
                 codeEl.value = '';
                 resultEl.textContent = '';
+                clearSqlPanels();
             } else {
                 taskTitleEl.style.display = 'none';
                 taskProblemEl.textContent = 'Сначала изучи теорию выше, затем нажми "Перейти к задачам".';
                 taskHintEl.textContent = '';
                 codeEl.value = '';
                 resultEl.textContent = '';
+                clearSqlPanels();
             }
         }
 
@@ -187,6 +236,34 @@
             codeEl.value = '';
             resultEl.textContent = '';
             resultEl.className = 'result';
+            showUserSql('');
+            showSolutionSql(currentTask.solution_sql || '');
+        }
+
+        async function fetchSql() {
+            if (!codeEl.value.trim()) {
+                showUserSql('');
+                resultEl.textContent = 'Введите ORM-запрос, чтобы увидеть SQL.';
+                resultEl.className = 'result err';
+                return;
+            }
+            const r = await fetch('/api/sql/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code: codeEl.value })
+            });
+            const data = await r.json();
+            if (data.error) {
+                showUserSql('');
+                resultEl.textContent = data.error;
+                resultEl.className = 'result err';
+                return;
+            }
+            showUserSql(data.sql || '');
+            if (data.sql) {
+                resultEl.textContent = '';
+                resultEl.className = 'result';
+            }
         }
 
         async function check() {
@@ -201,6 +278,9 @@
             const data = await r.json();
             resultEl.textContent = data.message || (data.ok ? 'Верно!' : 'Ошибка');
             resultEl.className = 'result ' + (data.ok ? 'ok' : 'err');
+            if (data.sql) {
+                showUserSql(data.sql);
+            }
         }
 
         function handleCodeIndentation(e) {
@@ -264,6 +344,7 @@
         }
 
         btnCheck.addEventListener('click', check);
+        btnSql.addEventListener('click', fetchSql);
         codeEl.addEventListener('keydown', handleCodeIndentation);
         btnStartTasks.addEventListener('click', showTasks);
         loadTopics();

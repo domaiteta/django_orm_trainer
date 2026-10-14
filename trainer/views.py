@@ -24,7 +24,7 @@ from trainer.models import (
     TimesheetPlan,
     InspectionGap,
 )
-from trainer.checker import check_answer
+from trainer.checker import check_answer, compile_solution_sql, compile_user_code_sql
 import json
 
 
@@ -106,6 +106,7 @@ def api_task_detail(request, task_id):
         'problem': task.problem,
         'hint_model': task.hint_model or '',
         'hint_model_fields': _model_fields(task.hint_model or ''),
+        'solution_sql': compile_solution_sql(task.solution_code) or '',
     })
 
 
@@ -125,5 +126,22 @@ def api_check(request):
         task = Task.objects.get(pk=task_id)
     except Task.DoesNotExist:
         return JsonResponse({'ok': False, 'message': 'Задание не найдено'}, status=404)
-    ok, message = check_answer(code, task.solution_code)
-    return JsonResponse({'ok': ok, 'message': message})
+    ok, message, sql = check_answer(code, task.solution_code)
+    return JsonResponse({'ok': ok, 'message': message, 'sql': sql or ''})
+
+
+@require_http_methods(['POST'])
+@csrf_exempt
+def api_sql(request):
+    """Компиляция ORM-кода в SQL без проверки ответа. Body: {"code": str}."""
+    try:
+        data = json.loads(request.body)
+        code = (data.get('code') or '').strip()
+    except (json.JSONDecodeError, TypeError):
+        return JsonResponse({'sql': '', 'error': 'Неверный запрос'}, status=400)
+    if not code:
+        return JsonResponse({'sql': '', 'error': 'Укажите code'}, status=400)
+    sql, error = compile_user_code_sql(code)
+    if error:
+        return JsonResponse({'sql': '', 'error': error})
+    return JsonResponse({'sql': sql or ''})

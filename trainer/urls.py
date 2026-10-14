@@ -8,4 +8,5 @@ urlpatterns = [
     path('api/topics/<int:topic_id>/', views.api_topic_detail),
     path('api/tasks/<int:task_id>/', views.api_task_detail),
     path('api/check/', views.api_check),
+    path('api/sql/', views.api_sql),
 ]

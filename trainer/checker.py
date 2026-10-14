@@ -168,6 +168,49 @@ def _subquery_output_field_hint(exc: FieldError) -> str:
     return ''
 
 
+def format_queryset_sql(qs: QuerySet) -> str | None:
+    """Компилирует QuerySet в сырой SQL (без выполнения запроса к БД)."""
+    if not isinstance(qs, QuerySet):
+        return None
+    try:
+        compiler = qs.query.get_compiler(using=qs.db)
+        sql, params = compiler.as_sql()
+        if not sql:
+            return None
+        sql = ' '.join(sql.split())
+        if params:
+            return f'{sql}\n\n-- параметры: {params!r}'
+        return sql
+    except Exception:
+        return None
+
+
+def compile_solution_sql(solution_code: str) -> str | None:
+    """Компилирует эталонный solution_code в SQL."""
+    try:
+        expected_qs = eval(solution_code, _safe_builtins(), ALLOWED)
+        if isinstance(expected_qs, QuerySet):
+            return format_queryset_sql(expected_qs)
+    except Exception:
+        pass
+    return None
+
+
+def compile_user_code_sql(user_code: str) -> tuple[str | None, str | None]:
+    """
+    Выполняет код пользователя и возвращает (sql, error).
+    error — текст ошибки, если код не скомпилировался в QuerySet.
+    """
+    normalized = _normalize_value_task_compat(user_code)
+    try:
+        user_qs = _eval_user_code(normalized)
+    except Exception as e:
+        return None, str(e)
+    if not isinstance(user_qs, QuerySet):
+        return None, 'Код должен возвращать QuerySet.'
+    return format_queryset_sql(user_qs), None
+
+
 def _timezone_mismatch_hint(user_code: str, solution_code: str) -> str:
     """Если эталон на timezone, а у пользователя datetime — поясняем разницу."""
     if 'datetime.now()' in user_code and 'timezone.now()' in solution_code:
@@ -179,18 +222,19 @@ def _timezone_mismatch_hint(user_code: str, solution_code: str) -> str:
     return ''
 
 
-def check_answer(user_code: str, solution_code: str) -> tuple[bool, str]:
+def check_answer(user_code: str, solution_code: str) -> tuple[bool, str, str | None]:
     """
     Выполняет solution_code и user_code, сравнивает результат с эталонным QuerySet
     (pk, либо values()+annotate, либо annotate на строках модели).
+    Возвращает (ok, message, sql) — sql компилируется из QuerySet пользователя.
     """
     try:
         expected_qs = eval(solution_code, _safe_builtins(), ALLOWED)
     except Exception as e:
-        return False, f'Ошибка в эталонном решении: {e}'
+        return False, f'Ошибка в эталонном решении: {e}', None
 
     if not isinstance(expected_qs, QuerySet):
-        return False, 'Эталонное решение должно возвращать QuerySet.'
+        return False, 'Эталонное решение должно возвращать QuerySet.', None
 
     annotation_keys = _get_annotation_keys(expected_qs)
     values_select = getattr(expected_qs.query, 'values_select', None)
@@ -201,14 +245,16 @@ def check_answer(user_code: str, solution_code: str) -> tuple[bool, str]:
     try:
         user_qs = _eval_user_code(normalized_user_code)
     except DatabaseError as e:
-        return False, f'Ошибка SQL при проверке: {e}.{_database_check_hint(e)}'
+        return False, f'Ошибка SQL при проверке: {e}.{_database_check_hint(e)}', None
     except Exception as e:
         msg = f'Ошибка при выполнении кода: {e}'
         msg += _timezone_mismatch_hint(normalized_user_code, solution_code)
-        return False, msg
+        return False, msg, None
 
     if not isinstance(user_qs, QuerySet):
-        return False, 'Код должен возвращать QuerySet (например Model.objects.filter(...)).'
+        return False, 'Код должен возвращать QuerySet (например Model.objects.filter(...)).', None
+
+    user_sql = format_queryset_sql(user_qs)
 
     if annotation_keys:
         user_ann = getattr(user_qs.query, 'annotations', {})
@@ -217,7 +263,7 @@ def check_answer(user_code: str, solution_code: str) -> tuple[bool, str]:
                 return False, (
                     f'В решении нет ожидаемой аннотации «{k}». '
                     f'Проверь имя в annotate(...=...) и что последняя строка возвращает этот QuerySet.'
-                )
+                ), user_sql
         if group_by_values:
             exp_vs = tuple(values_select)
             user_vs = getattr(user_qs.query, 'values_select', None)
@@ -226,7 +272,7 @@ def check_answer(user_code: str, solution_code: str) -> tuple[bool, str]:
                 return False, (
                     'Набор и порядок полей в values(...) должны совпасть с эталоном '
                     f'(ожидалось {list(exp_vs)}, получено {list(user_vs_t) if user_vs_t else "без values"}).'
-                )
+                ), user_sql
         try:
             expected_signature = _get_signature(expected_qs, annotation_keys)
             user_signature = _get_signature(user_qs, annotation_keys)
@@ -234,12 +280,12 @@ def check_answer(user_code: str, solution_code: str) -> tuple[bool, str]:
             return False, (
                 f'Аннотации объявлены, но запрос нельзя выполнить: {e}.'
                 + _subquery_output_field_hint(e)
-            )
+            ), user_sql
         except DatabaseError as e:
-            return False, f'Ошибка SQL при сравнении аннотаций: {e}.{_database_check_hint(e)}'
+            return False, f'Ошибка SQL при сравнении аннотаций: {e}.{_database_check_hint(e)}', user_sql
 
         if user_signature == expected_signature:
-            return True, 'Верно!'
+            return True, 'Верно!', user_sql
 
         if group_by_values:
             desc = f"{', '.join(values_select)}, {', '.join(annotation_keys)}"
@@ -250,23 +296,25 @@ def check_answer(user_code: str, solution_code: str) -> tuple[bool, str]:
             f'Неверный результат/аннотации. Проверяются поля: {desc}. '
             f'Ожидалось: {expected_signature[:10]}{"..." if len(expected_signature) > 10 else ""}, '
             f'получено: {user_signature[:10]}{"..." if len(user_signature) > 10 else ""}'
-            + _timezone_mismatch_hint(normalized_user_code, solution_code)
+            + _timezone_mismatch_hint(normalized_user_code, solution_code),
+            user_sql,
         )
 
     try:
         expected_signature = _get_signature(expected_qs, [])
         user_signature = _get_signature(user_qs, [])
     except DatabaseError as e:
-        return False, f'Ошибка SQL при проверке: {e}.{_database_check_hint(e)}'
+        return False, f'Ошибка SQL при проверке: {e}.{_database_check_hint(e)}', user_sql
 
     if user_signature == expected_signature:
-        return True, 'Верно!'
+        return True, 'Верно!', user_sql
 
     return (
         False,
         f'Неверный результат. Ожидалось: {expected_signature[:20]}{"..." if len(expected_signature) > 20 else ""}, '
         f'получено: {user_signature[:20]}{"..." if len(user_signature) > 20 else ""}'
-        + _timezone_mismatch_hint(normalized_user_code, solution_code)
+        + _timezone_mismatch_hint(normalized_user_code, solution_code),
+        user_sql,
     )
 
 
